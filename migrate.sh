@@ -9,9 +9,159 @@
 sshKeyPath="$HOME/.ssh/your_private_key" # Key to destination server
 destinationHost="server.example.com"
 
+# Prompt for configuration if defaults are still set
+if [ "$sshKeyPath" = "$HOME/.ssh/your_private_key" ] || [ "$destinationHost" = "server.example.com" ]; then
+  echo "⚠️  Configuration not set. Please provide the following:"
+  echo ""
+  
+  if [ "$sshKeyPath" = "$HOME/.ssh/your_private_key" ]; then
+    echo "Enter the path to your SSH private key for the destination server:"
+    read -r sshKeyPath
+    if [ -z "$sshKeyPath" ]; then
+      echo "❌ SSH key path cannot be empty"
+      exit 1
+    fi
+  fi
+  
+  if [ "$destinationHost" = "server.example.com" ]; then
+    echo "Enter the destination server hostname or IP address:"
+    read -r destinationHost
+    if [ -z "$destinationHost" ]; then
+      echo "❌ Destination host cannot be empty"
+      exit 1
+    fi
+  fi
+  
+  echo ""
+fi
+
 # -- Shouldn't need to modify anything below --
 backupSourceDir="/data/coolify/"
 backupFileName="coolify_backup.tar.gz"
+
+# Check if pigz is available (for faster compression)
+if ! command -v pigz >/dev/null 2>&1; then
+  echo "⚠️  WARNING: pigz is not installed. The backup will use gzip instead, which may be slower."
+  echo ""
+  echo "Do you want to try to auto-install pigz? (y/n)"
+  read -r install_answer
+  if [ "$install_answer" = "${install_answer#[Yy]}" ]; then
+    # User declined auto-install, ask if they want to continue
+    echo ""
+    echo "Do you want to continue without pigz? (y/n)"
+    read -r answer
+    if [ "$answer" != "${answer#[Yy]}" ]; then
+      echo "✅ Continuing with gzip..."
+    else
+      echo "❌ Aborted by user. Please install pigz and try again."
+      exit 1
+    fi
+  else
+    # Try to auto-install pigz
+    echo "🚸 Attempting to install pigz..."
+    
+    # Determine if we need sudo (check if we're root)
+    if [ "$EUID" -eq 0 ]; then
+      SUDO_CMD=""
+    else
+      SUDO_CMD="sudo"
+    fi
+    
+    # Detect OS and install pigz accordingly
+    if [ -f /etc/debian_version ] || { [ -f /etc/os-release ] && grep -iq "raspbian\|debian\|ubuntu" /etc/os-release; }; then
+      echo "ℹ️ Detected Debian-based system"
+      if $SUDO_CMD apt-get update && $SUDO_CMD apt-get install -y pigz; then
+        echo "✅ pigz installed successfully"
+      else
+        echo "❌ Failed to install pigz on Debian-based system"
+        echo ""
+        echo "Do you want to continue without pigz? (y/n)"
+        read -r answer
+        if [ "$answer" != "${answer#[Yy]}" ]; then
+          echo "✅ Continuing with gzip..."
+        else
+          echo "❌ Aborted by user. Please install pigz manually and try again."
+          exit 1
+        fi
+      fi
+    elif [ -f /etc/redhat-release ] || { [ -f /etc/os-release ] && grep -iq "rhel\|centos\|fedora" /etc/os-release; }; then
+      echo "ℹ️ Detected Redhat-based system"
+      if $SUDO_CMD yum install -y pigz 2>/dev/null || $SUDO_CMD dnf install -y pigz; then
+        echo "✅ pigz installed successfully"
+      else
+        echo "❌ Failed to install pigz on Redhat-based system"
+        echo ""
+        echo "Do you want to continue without pigz? (y/n)"
+        read -r answer
+        if [ "$answer" != "${answer#[Yy]}" ]; then
+          echo "✅ Continuing with gzip..."
+        else
+          echo "❌ Aborted by user. Please install pigz manually and try again."
+          exit 1
+        fi
+      fi
+    elif [ -f /etc/SuSE-release ] || { [ -f /etc/os-release ] && grep -iq "suse" /etc/os-release; }; then
+      echo "ℹ️ Detected SUSE-based system"
+      if $SUDO_CMD zypper install -y pigz; then
+        echo "✅ pigz installed successfully"
+      else
+        echo "❌ Failed to install pigz on SUSE-based system"
+        echo ""
+        echo "Do you want to continue without pigz? (y/n)"
+        read -r answer
+        if [ "$answer" != "${answer#[Yy]}" ]; then
+          echo "✅ Continuing with gzip..."
+        else
+          echo "❌ Aborted by user. Please install pigz manually and try again."
+          exit 1
+        fi
+      fi
+    elif [ -f /etc/arch-release ]; then
+      echo "ℹ️ Detected Arch Linux"
+      if $SUDO_CMD pacman -Sy --noconfirm pigz; then
+        echo "✅ pigz installed successfully"
+      else
+        echo "❌ Failed to install pigz on Arch Linux"
+        echo ""
+        echo "Do you want to continue without pigz? (y/n)"
+        read -r answer
+        if [ "$answer" != "${answer#[Yy]}" ]; then
+          echo "✅ Continuing with gzip..."
+        else
+          echo "❌ Aborted by user. Please install pigz manually and try again."
+          exit 1
+        fi
+      fi
+    elif [ -f /etc/alpine-release ]; then
+      echo "ℹ️ Detected Alpine Linux"
+      if $SUDO_CMD apk add --no-cache pigz; then
+        echo "✅ pigz installed successfully"
+      else
+        echo "❌ Failed to install pigz on Alpine Linux"
+        echo ""
+        echo "Do you want to continue without pigz? (y/n)"
+        read -r answer
+        if [ "$answer" != "${answer#[Yy]}" ]; then
+          echo "✅ Continuing with gzip..."
+        else
+          echo "❌ Aborted by user. Please install pigz manually and try again."
+          exit 1
+        fi
+      fi
+    else
+      echo "❌ Unsupported OS. Cannot auto-install pigz."
+      echo ""
+      echo "Do you want to continue without pigz? (y/n)"
+      read -r answer
+      if [ "$answer" != "${answer#[Yy]}" ]; then
+        echo "✅ Continuing with gzip..."
+      else
+        echo "❌ Aborted by user. Please install pigz manually and try again."
+        exit 1
+      fi
+    fi
+  fi
+fi
 
 # Check if the source directory exists
 if [ ! -d "$backupSourceDir" ]; then
@@ -28,14 +178,23 @@ fi
 echo "✅ SSH key file exists"
 
 # Check if we can SSH to the destination server, ignore "The authenticity of host can't be established." errors
-if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" -o "ConnectTimeout=5" root@$destinationHost "exit"; then
+if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" -o "ConnectTimeout=5" "root@${destinationHost}" "exit"; then
   echo "❌ SSH connection to $destinationHost failed"
   exit 1
 fi
 echo "✅ SSH connection successful"
 
 # Get the names of all running Docker containers
-containerNames=$(docker ps --format '{{.Names}}')
+if ! command -v docker >/dev/null 2>&1; then
+  echo "❌ Docker is not installed or not in PATH"
+  exit 1
+fi
+
+containerNames=$(docker ps --format '{{.Names}}' 2>/dev/null)
+if [ $? -ne 0 ]; then
+  echo "❌ Failed to get Docker container list. Is Docker running?"
+  exit 1
+fi
 
 # Initialize an empty string to hold the volume paths
 volumePaths=""
@@ -43,7 +202,11 @@ volumePaths=""
 # Loop over the container names
 for containerName in $containerNames; do
   # Get the volumes for the current container
-  volumeNames=$(docker inspect --format '{{range .Mounts}}{{printf "%s\n" .Name}}{{end}}' "$containerName")
+  volumeNames=$(docker inspect --format '{{range .Mounts}}{{printf "%s\n" .Name}}{{end}}' "$containerName" 2>/dev/null)
+  if [ $? -ne 0 ]; then
+    echo "⚠️  Warning: Failed to inspect container $containerName, skipping"
+    continue
+  fi
 
   # Loop over the volume names
   for volumeName in $volumeNames; do
@@ -56,8 +219,12 @@ for containerName in $containerNames; do
 done
 
 # Calculate the total size of the volumes
-# shellcheck disable=SC2086
-totalSize=$(du -csh $volumePaths 2>/dev/null | grep total | awk '{print $1}')
+if [ -n "$volumePaths" ]; then
+  # shellcheck disable=SC2086
+  totalSize=$(du -csh $volumePaths 2>/dev/null | grep total | awk '{print $1}')
+else
+  totalSize="0"
+fi
 
 # Print the total size of the volumes
 echo "✅ Total size of volumes to migrate: $totalSize"
@@ -71,15 +238,20 @@ if [ ! -f "$backupFileName" ]; then
   echo "🚸 Backup file does not exist, creating"
 
   # Recommend stopping docker before creating the backup
-  echo "🚸 It's recommended to stop all Docker containers before creating the backup
-  Do you want to stop Docker? (y/n)"
+  echo "🚸 It's recommended to stop all Docker containers before creating the backup"
+  echo "Do you want to stop Docker? (y/n)"
   read -r answer
   if [ "$answer" != "${answer#[Yy]}" ]; then
-    if ! systemctl stop docker; then
-      echo "❌ Docker stop failed"
-      exit 1
+    if command -v systemctl >/dev/null 2>&1; then
+      if ! systemctl stop docker; then
+        echo "❌ Docker stop failed"
+        exit 1
+      fi
+      echo "✅ Docker stopped"
+    else
+      echo "⚠️  systemctl not found, cannot stop Docker service"
+      echo "🚸 Continuing with backup (Docker may still be running)"
     fi
-    echo "✅ Docker stopped"
   else
     echo "🚸 Docker not stopped, continuing with the backup"
   fi
@@ -87,14 +259,20 @@ if [ ! -f "$backupFileName" ]; then
   # Choose compressor
   if command -v pigz >/dev/null 2>&1; then
     echo "✅ Using pigz for parallel gzip"
-    compressor="pigz -p$(nproc)"
+    # Get number of CPU cores, fallback to 1 if nproc is not available
+    if command -v nproc >/dev/null 2>&1; then
+      cores=$(nproc)
+    else
+      cores=1
+    fi
+    compressor="pigz -p${cores}"
   else
     echo "ℹ️ pigz not found, using gzip"
     compressor="gzip"
   fi
 
   # shellcheck disable=SC2086
-  tar --exclude='*.sock' --warning=no-file-changed -I "$compressor" -Pcf "$backupFileName" \
+  tar --exclude='*.sock' --warning=no-file-changed -I "$compressor" -Pcf "${backupFileName}" \
     -C / $backupSourceDir $HOME/.ssh/authorized_keys $volumePaths
   rc=$?
   if [ $rc -gt 1 ]; then
@@ -125,19 +303,19 @@ remoteCommands="
     echo 'ℹ️  curl is not installed. Installing curl...';
 
       # Detect OS and install curl accordingly
-      if [ -f /etc/debian_version ] || { [ -f /etc/os-release ] && grep -iq "raspbian" /etc/os-release; }; then
+      if [ -f /etc/debian_version ] || { [ -f /etc/os-release ] && grep -iq "raspbian\|debian\|ubuntu" /etc/os-release; }; then
         echo 'ℹ️ Detected Debian-based or Raspberry Pi OS';
-        if ! apt-get update && apt-get install -y curl; then
-        echo '❌ Failed to install curl on Debian-based or Raspberry Pi OS';
-        exit 1;
+        if ! (apt-get update && apt-get install -y curl); then
+          echo '❌ Failed to install curl on Debian-based or Raspberry Pi OS';
+          exit 1;
         fi
-      elif [ -f /etc/redhat-release ]; then
+      elif [ -f /etc/redhat-release ] || { [ -f /etc/os-release ] && grep -iq "rhel\|centos\|fedora" /etc/os-release; }; then
         echo 'ℹ️ Detected Redhat-based system';
-        if ! yum install -y curl; then
-        echo '❌ Failed to install curl on Redhat-based system';
-        exit 1;
+        if ! (yum install -y curl 2>/dev/null || dnf install -y curl); then
+          echo '❌ Failed to install curl on Redhat-based system';
+          exit 1;
         fi
-      elif [ -f /etc/SuSE-release ] || [ -f /etc/os-release ] && grep -iq "suse" /etc/os-release; then
+      elif [ -f /etc/SuSE-release ] || { [ -f /etc/os-release ] && grep -iq "suse" /etc/os-release; }; then
         echo 'ℹ️ Detected SUSE-based system';
         if ! zypper install -y curl; then
         echo '❌ Failed to install curl on SUSE-based system';
@@ -161,12 +339,16 @@ remoteCommands="
       fi
 
       echo '✅ curl installed';
-      else
+    else
       echo '✅ curl is already installed';
-      fi
+    fi
 
   echo '🚸 Saving existing authorized keys...';
-  cp ~/.ssh/authorized_keys ~/.ssh/authorized_keys_backup;
+  if [ -f ~/.ssh/authorized_keys ]; then
+    cp ~/.ssh/authorized_keys ~/.ssh/authorized_keys_backup;
+  else
+    touch ~/.ssh/authorized_keys_backup;
+  fi
 
   echo '🚸 Extracting backup file...'
   if command -v pigz >/dev/null 2>&1; then
@@ -184,9 +366,13 @@ remoteCommands="
   echo '✅ Backup file extracted'
 
   echo '🚸 Merging authorized keys...';
-  cat ~/.ssh/authorized_keys_backup ~/.ssh/authorized_keys | sort | uniq > ~/.ssh/authorized_keys_temp;
-  mv ~/.ssh/authorized_keys_temp ~/.ssh/authorized_keys;
-  chmod 600 ~/.ssh/authorized_keys;
+  if [ -f ~/.ssh/authorized_keys_backup ] && [ -f ~/.ssh/authorized_keys ]; then
+    cat ~/.ssh/authorized_keys_backup ~/.ssh/authorized_keys | sort | uniq > ~/.ssh/authorized_keys_temp;
+    mv ~/.ssh/authorized_keys_temp ~/.ssh/authorized_keys;
+  elif [ -f ~/.ssh/authorized_keys_backup ]; then
+    cp ~/.ssh/authorized_keys_backup ~/.ssh/authorized_keys;
+  fi
+  chmod 600 ~/.ssh/authorized_keys 2>/dev/null || true;
   echo '✅ Authorized keys merged';
 
   if ! curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash; then
@@ -197,7 +383,7 @@ remoteCommands="
 "
 
 # SSH to the destination server, execute the remote commands
-if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" root@$destinationHost "$remoteCommands" <$backupFileName; then
+if ! ssh -i "$sshKeyPath" -o "StrictHostKeyChecking no" "root@${destinationHost}" "$remoteCommands" <"${backupFileName}"; then
   echo "❌ Remote commands execution or Docker restart failed"
   exit 1
 fi
@@ -207,7 +393,7 @@ echo "✅ Remote commands executed successfully"
 echo "Do you want to remove the local backup file? (y/n)"
 read -r answer
 if [ "$answer" != "${answer#[Yy]}" ]; then
-  if ! rm -f $backupFileName; then
+  if ! rm -f "${backupFileName}"; then
     echo "❌ Failed to remove local backup file"
     exit 1
   fi
